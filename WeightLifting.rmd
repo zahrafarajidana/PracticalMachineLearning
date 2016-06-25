@@ -1,0 +1,85 @@
+```{r include=FALSE}
+library(caret);
+library(rpart);
+library(RColorBrewer);
+library(rattle);
+library(randomForest);
+library(knitr);
+```
+
+#Loading the Data
+In this section, I load the test and train data.
+```{r}
+set.seed(4512);
+TrainDataUrl<- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv";
+TestDataUrl<- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv";
+TrainData<- read.csv(url(TrainDataUrl), na.strings=c("NA","#DIV/0!",""));
+TestData<- read.csv(url(TestDataUrl), , na.strings=c("NA","#DIV/0!",""));
+```
+
+#Cleaning the Data
+I remove  columns of NAs as well as the first 7 features of the TestData and TrainData. 
+```{r}
+# Remove columns full of NAs 
+features <- names(TestData[,colSums(is.na(TestData)) == 0])[8:59];
+# Only use features used in TestData
+TrainData <- TrainData[,c(features,"classe")];
+TestData <- TestData[,c(features,"problem_id")];
+```
+
+#Bootstrap 
+I withhold 30% of the dataset as my own test data
+```{r}
+inTrain <- createDataPartition(TrainData$classe, p=0.70, list=FALSE);
+myTraining <- TrainData[inTrain, ];
+myTesting <- TrainData[-inTrain, ];
+dim(myTraining)
+dim(myTesting)
+```
+
+#Feature selection
+To deal with correlated features, I ignore features that are highly correlated. The cut-off threshold was set at correlation coefficient > 90%.
+```{r}
+outcome = which(names(myTraining) == "classe");
+highCorr = findCorrelation(abs(cor(myTraining[,-outcome])),0.90);
+highCorrNames = names(myTraining)[highCorr];
+myTraining = myTraining[,-highCorr];
+outcome = which(names(myTraining) == "classe");
+```
+The following 7 features were removed due to high correlation: accel_belt_z, roll_belt, accel_belt_y, accel_belt_x, gyros_arm_y, gyros_forearm_z, and gyros_dumbbell_x.
+
+#Feature exploration
+The random forest method is great for nonlinear features. In order to verify feature non-linerity, I first use random forest to discover the most important features. Below is the feature plot for the most important features.
+```{r}
+fsRF = randomForest(myTraining[,-outcome], myTraining[,outcome], importance = TRUE)
+RFimp = data.frame(fsRF$importance);
+impF = order(-RFimp$MeanDecreaseGini);
+inImp = createDataPartition(TrainData$classe, p = 0.05, list = FALSE);
+featurePlot(myTraining[inImp,impF[1:4]],myTraining$classe[inImp], plot = "pairs")
+```
+
+According to the analysis, pitch_belt,  yaw_belt total_accel_belt and gyros_belt_x are the most important features.
+
+#Training
+Here I train using both random forest and k-nearest neighbors.
+```{r}
+ctrlKNN = trainControl(method = "adaptive_cv")
+modelKNN = train(classe ~ ., myTraining, method = "knn", trControl = ctrlKNN)
+ctrlRF = trainControl(method = "oob")
+modelRF = train(classe ~ ., myTraining, method = "rf", ntree = 200, trControl = ctrlRF)
+resultsKNN = data.frame(modelKNN$results)
+resultsRF = data.frame(modelRF$results)
+```
+
+#Testing out-of-sample error
+The random forest has  a larger accuracy compared to k-nearest neighbors. I obtain the confusion matrix between the KNN and RF models to see their agreement on the test set and  then I compare each model using the test set outcomes.
+```{r}
+fitKNN = predict(modelKNN, myTesting)
+fitRF = predict(modelRF, myTesting)
+KNNAccuracy = confusionMatrix(fitKNN, myTesting$classe)
+KNNAccuracy
+RFAccuracy = confusionMatrix(fitRF, myTesting$classe)
+RFAccuracy
+```
+The random forest fit is obviously more accurate than the k-nearest neighbors method with 99% accuracy.
+
